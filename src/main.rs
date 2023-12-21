@@ -1,12 +1,11 @@
 #![feature(ascii_char)]
 #![feature(iter_map_windows)]
+#![feature(get_many_mut)]
 
 extern crate core;
 
-mod day1;
-mod day2;
-mod day3;
+mod day14;
 
 fn main() {
-    day3::day3();
+    day14::day14();
 }
