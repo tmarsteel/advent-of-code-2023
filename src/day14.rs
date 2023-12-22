@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::fmt::{Display, Formatter, Write};
 use std::fs;
 use nom::{
@@ -18,6 +17,13 @@ enum PlatformItem {
 }
 
 impl PlatformItem {
+    fn is_empty(&self) -> bool {
+        match self {
+            PlatformItem::Empty => true,
+            _ => false,
+        }
+    }
+
     fn is_movable(&self) -> bool {
         match self {
             PlatformItem::RoundRock => true,
@@ -43,44 +49,29 @@ impl Display for PlatformItem {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct PlatformState {
     rows: Vec<Vec<PlatformItem>>,
 }
 
 impl PlatformState {
-    fn tilted_north(&self) -> PlatformState {
-        let mut copy = self.clone();
+    fn tilt_north(&mut self) {
         let mut any_moved = true;
         while any_moved {
             // there is no do-while, so we have to do this uglyness
             any_moved = false;
 
             // loop rows windowed
-            for i in 0..copy.rows.len() - 1 {
-                let row_window = copy.rows.get_many_mut([i, i+1]).expect("Index math incorrect");
-                let free_spots = indices_of(row_window[0], &PlatformItem::Empty);
-                let movable_indices: Vec<_> = row_window[1]
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, below_item)| {
-                        if below_item.is_movable() && free_spots.contains(&index) {
-                            Some(index)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                for movable_index in movable_indices {
-                    row_window[0][movable_index] = row_window[1][movable_index].clone();
-                    row_window[1][movable_index] = PlatformItem::Empty;
-                    any_moved = true;
+            for i in 0..self.rows.len() - 1 {
+                let row_window = self.rows.get_many_mut([i, i+1]).expect("Index math incorrect");
+                for i in 0..row_window[0].len() {
+                    if row_window[0][i].is_empty() && row_window[1][i].is_movable() {
+                        row_window[0][i] = row_window[1][i].clone();
+                        row_window[1][i] = PlatformItem::Empty;
+                    }
                 }
             }
         }
-
-        copy
     }
 
     fn north_beam_load(&self) -> u32 {
@@ -93,6 +84,48 @@ impl PlatformState {
                     .sum::<u32>()
             })
             .sum::<u32>()
+    }
+
+    fn n_columns(&self) -> usize {
+        // just assume square, even though this is never checked anywhere :)
+        self.rows.get(0).map(|row| row.len())
+            .unwrap_or(0usize)
+    }
+
+    /**
+     * Rotates the platform by 90 degrees clockwise
+     */
+    fn rotate_quarter_circle_clockwise(&self) -> PlatformState {
+        let mut rows: Vec<Vec<PlatformItem>> = Vec::new();
+        for column_index in 0..self.n_columns() {
+            let mut new_row = self.rows.iter()
+                .map(|row| row[column_index].clone())
+                .collect::<Vec<_>>();
+            new_row.reverse();
+            rows.push(new_row);
+        }
+
+        PlatformState { rows }
+    }
+
+    fn cycle_times(&self, n_cycles: u32) -> PlatformState {
+        let mut carry = self.clone();
+        for n_cycle in 0..n_cycles {
+            carry.tilt_north();
+            carry = carry.rotate_quarter_circle_clockwise();
+            carry.tilt_north();
+            carry = carry.rotate_quarter_circle_clockwise();
+            carry.tilt_north();
+            carry = carry.rotate_quarter_circle_clockwise();
+            carry.tilt_north();
+            carry = carry.rotate_quarter_circle_clockwise();
+
+            if n_cycle % 100 == 0 {
+                println!("{} of {} cycles done", n_cycle, n_cycles)
+            }
+        }
+
+        panic!("unreachable")
     }
 }
 
@@ -143,12 +176,10 @@ pub(crate) fn day14() {
     let input_string = fs::read_to_string("inputs/day14.txt")
         .expect("Couldnt read input");
     let (_, platform) = platform_state(&input_string).expect("Failed to parse input");
-    let platform = platform.tilted_north();
-    println!("{}", platform);
-    println!("{}", platform.north_beam_load());
+    println!("{}", platform.cycle_times(1000000000).north_beam_load());
 }
 
-fn indices_of<T : PartialEq>(items: &Vec<T>, needle: &T) -> HashSet<usize> {
+fn indices_of<'a, T : PartialEq>(items: &'a Vec<T>, needle: &'a T) -> impl Iterator<Item = usize> + 'a {
     return items.iter()
         .enumerate()
         .filter_map(|(index, item)| {
@@ -158,5 +189,4 @@ fn indices_of<T : PartialEq>(items: &Vec<T>, needle: &T) -> HashSet<usize> {
                 None
             }
         })
-        .collect()
 }
