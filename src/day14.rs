@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter, Write};
 use std::fs;
 use nom::{
@@ -9,7 +10,7 @@ use nom::character::complete::line_ending;
 use nom::combinator::{all_consuming, eof};
 use nom::multi::many1;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 enum PlatformItem {
     Empty,
     RoundRock,
@@ -49,7 +50,7 @@ impl Display for PlatformItem {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Hash, Eq, PartialEq)]
 enum MatrixRotation {
     ORIGINAL,
     ONCE,
@@ -84,7 +85,7 @@ impl MatrixRotation {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Hash, Eq, PartialEq)]
 struct Matrix2<T> {
     elements: Vec<T>,
     n_rows: usize,
@@ -136,7 +137,7 @@ impl<T : Clone> Matrix2<T> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Hash, Eq, PartialEq)]
 struct PlatformState {
     data: Matrix2<PlatformItem>,
 }
@@ -190,8 +191,12 @@ impl PlatformState {
     }
 
     fn cycle_times(&self, n_cycles: u32) -> PlatformState {
+        let mut states_seen: HashMap<PlatformState, u32> = HashMap::new();
+        states_seen.insert(self.clone(), 0);
+
+        let mut n_cycle: u32 = 0;
         let mut carry = self.clone();
-        for n_cycle in 0..n_cycles {
+        while n_cycle < n_cycles {
             carry.tilt_north();
             carry.rotate_quarter_circle_clockwise();
             carry.tilt_north();
@@ -201,12 +206,39 @@ impl PlatformState {
             carry.tilt_north();
             carry.rotate_quarter_circle_clockwise();
 
-            if n_cycle % 1000 == 0 {
-                println!("{} of {} cycles done", n_cycle, n_cycles)
+            match states_seen.get(&carry) {
+                Some(period_starts_at_index) => {
+                    let period_length = n_cycle - period_starts_at_index;
+                    println!("period detected at cycle {}: starts at {} of length {}", n_cycle, period_starts_at_index, period_length);
+                    if period_length == 0 {
+                        return carry
+                    }
+
+                    let cycles_remaining = n_cycles - n_cycle;
+                    let cycles_into_period = cycles_remaining % period_length;
+                    let index_to_return = period_starts_at_index + cycles_into_period - 1;
+                    println!("cycles_remaining = {}, cycles_into_period = {}, index_to_return = {}", cycles_remaining, cycles_into_period, index_to_return);
+                    return states_seen.iter()
+                        .filter_map(|(state, index)| {
+                            if *index == index_to_return {
+                                Some(state)
+                            } else {
+                                None
+                            }
+                        })
+                        .next()
+                        .unwrap()
+                        .clone();
+                }
+                None => {
+                    states_seen.insert(carry.clone(), n_cycle);
+                }
             }
+
+            n_cycle = n_cycle + 1
         }
 
-        carry
+        panic!("Unreachable")
     }
 }
 
@@ -258,5 +290,6 @@ pub(crate) fn day14() {
         .expect("Couldnt read input");
     let (_, mut platform) = platform_state(&input_string).expect("Failed to parse input");
 
-    println!("{}", platform.cycle_times(1_000_000_000));
+    let cycled = platform.cycle_times(1_000_000_000);
+    println!("{}", cycled.north_beam_load());
 }
