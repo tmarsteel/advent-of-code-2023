@@ -62,12 +62,13 @@ impl PlatformState {
             any_moved = false;
 
             // loop rows windowed
-            for i in 0..self.rows.len() - 1 {
-                let row_window = self.rows.get_many_mut([i, i+1]).expect("Index math incorrect");
-                for i in 0..row_window[0].len() {
-                    if row_window[0][i].is_empty() && row_window[1][i].is_movable() {
-                        row_window[0][i] = row_window[1][i].clone();
-                        row_window[1][i] = PlatformItem::Empty;
+            for row_index in 0..self.rows.len() - 1 {
+                let row_window = self.rows.get_many_mut([row_index, row_index+1]).expect("Index math incorrect");
+                for col_index in 0..row_window[0].len() {
+                    if row_window[0][col_index].is_empty() && row_window[1][col_index].is_movable() {
+                        row_window[0][col_index] = row_window[1][col_index].clone();
+                        row_window[1][col_index] = PlatformItem::Empty;
+                        any_moved = true;
                     }
                 }
             }
@@ -120,12 +121,12 @@ impl PlatformState {
             carry.tilt_north();
             carry = carry.rotate_quarter_circle_clockwise();
 
-            if n_cycle % 100 == 0 {
+            if n_cycle % 1000 == 0 {
                 println!("{} of {} cycles done", n_cycle, n_cycles)
             }
         }
 
-        panic!("unreachable")
+        carry
     }
 }
 
@@ -175,18 +176,6 @@ fn platform_state(input: &str) -> IResult<&str, PlatformState> {
 pub(crate) fn day14() {
     let input_string = fs::read_to_string("inputs/day14.txt")
         .expect("Couldnt read input");
-    let (_, platform) = platform_state(&input_string).expect("Failed to parse input");
+    let (_, mut platform) = platform_state(&input_string).expect("Failed to parse input");
     println!("{}", platform.cycle_times(1000000000).north_beam_load());
-}
-
-fn indices_of<'a, T : PartialEq>(items: &'a Vec<T>, needle: &'a T) -> impl Iterator<Item = usize> + 'a {
-    return items.iter()
-        .enumerate()
-        .filter_map(|(index, item)| {
-            if item.eq(needle) {
-                Some(index)
-            } else {
-                None
-            }
-        })
 }
