@@ -49,12 +49,105 @@ impl Display for PlatformItem {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone)]
+enum MatrixRotation {
+    ORIGINAL,
+    ONCE,
+    TWICE,
+    THRICE,
+}
+
+impl MatrixRotation {
+    fn swap_rows_cols<T>(matrix: &mut Matrix2<T>) {
+        let tmp = matrix.n_rows;
+        matrix.n_rows = matrix.n_cols;
+        matrix.n_cols = tmp;
+    }
+
+    fn rotate_quarter_circle_clockwise<T>(matrix: &mut Matrix2<T>) {
+        matrix.rotation = match matrix.rotation {
+            MatrixRotation::ORIGINAL => MatrixRotation::ONCE,
+            MatrixRotation::ONCE => MatrixRotation::TWICE,
+            MatrixRotation::TWICE => MatrixRotation::THRICE,
+            MatrixRotation::THRICE => MatrixRotation::ORIGINAL,
+        };
+        MatrixRotation::swap_rows_cols(matrix);
+    }
+
+    fn calculate_index<T>(&self, matrix: &Matrix2<T>, row: usize, col: usize) -> usize {
+        match self {
+            MatrixRotation::ORIGINAL => matrix.n_cols * row + col,
+            MatrixRotation::ONCE => (matrix.n_cols - 1 - col) * matrix.n_rows + row,
+            MatrixRotation::TWICE => (matrix.n_rows - 1 - row) * matrix.n_cols + col,
+            MatrixRotation::THRICE => (matrix.n_rows * col) + (matrix.n_rows - 1 - row),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct Matrix2<T> {
+    elements: Vec<T>,
+    n_rows: usize,
+    n_cols: usize,
+    rotation: MatrixRotation,
+}
+
+impl<T : Clone> Matrix2<T> {
+    fn new(rows: Vec<Vec<T>>) -> Matrix2<T> {
+        let n_rows = rows.len();
+        let n_cols = rows.first().map(|r| r.len()).unwrap_or(0);
+        for i in 0..n_rows {
+            if rows[i].len() != n_cols {
+                panic!("Given data is not a rectangle: row#{} has {} elements, different than the expected {}", i, rows[i].len(), n_cols);
+            }
+        }
+
+        let data: Vec<T> = rows.iter().flatten().map(|e| e.clone()).collect();
+
+        Matrix2 {
+            elements: data,
+            n_rows,
+            n_cols,
+            rotation: MatrixRotation::ORIGINAL,
+        }
+    }
+
+    fn calculate_index(&self, row: usize, col: usize) -> usize {
+        return self.rotation.calculate_index(self, row, col)
+    }
+
+    fn get(&self, row: usize, col: usize) -> &T {
+        &self.elements[self.calculate_index(row, col)]
+    }
+
+    fn set(&mut self, row: usize, col: usize, item: T) {
+        let index = self.calculate_index(row, col);
+        self.elements[index] = item;
+    }
+
+    fn iter_row<'a>(&'a self, row: usize) -> impl Iterator<Item = &'a T> {
+        self.elements.iter()
+            .skip(self.calculate_index(row, 0))
+            .take(self.n_cols)
+    }
+
+    fn rotate_quarter_circle_clockwise(&mut self) {
+        MatrixRotation::rotate_quarter_circle_clockwise(self);
+    }
+}
+
+#[derive(Clone)]
 struct PlatformState {
-    rows: Vec<Vec<PlatformItem>>,
+    data: Matrix2<PlatformItem>,
 }
 
 impl PlatformState {
+    fn new(rows: Vec<Vec<PlatformItem>>) -> PlatformState {
+        PlatformState {
+            data: Matrix2::new(rows),
+        }
+    }
+
     fn tilt_north(&mut self) {
         let mut any_moved = true;
         while any_moved {
@@ -62,12 +155,14 @@ impl PlatformState {
             any_moved = false;
 
             // loop rows windowed
-            for row_index in 0..self.rows.len() - 1 {
-                let row_window = self.rows.get_many_mut([row_index, row_index+1]).expect("Index math incorrect");
-                for col_index in 0..row_window[0].len() {
-                    if row_window[0][col_index].is_empty() && row_window[1][col_index].is_movable() {
-                        row_window[0][col_index] = row_window[1][col_index].clone();
-                        row_window[1][col_index] = PlatformItem::Empty;
+            for row_index in 0..self.data.n_rows - 1 {
+                let row_index_next = row_index + 1;
+                for col_index in 0..self.data.n_cols {
+                    let row_item = self.data.get(row_index, col_index);
+                    let next_item = self.data.get(row_index_next, col_index);
+                    if row_item.is_empty() && next_item.is_movable() {
+                        self.data.set(row_index, col_index, next_item.clone());
+                        self.data.set(row_index_next, col_index, PlatformItem::Empty);
                         any_moved = true;
                     }
                 }
@@ -76,50 +171,35 @@ impl PlatformState {
     }
 
     fn north_beam_load(&self) -> u32 {
-        self.rows.iter()
-            .enumerate()
-            .map(|(row_index, row)| {
-                let row_load_factor = u32::try_from(self.rows.len() - row_index).unwrap();
-                row.iter()
-                    .map(|item| item.weight() * row_load_factor)
-                    .sum::<u32>()
-            })
-            .sum::<u32>()
-    }
+        let mut result: u32 = 0;
+        for row_index in 0..self.data.n_rows {
+            let row_load_factor = u32::try_from(self.data.n_rows - row_index).unwrap();
+            result += self.data.iter_row(row_index)
+                .map(|item| item.weight() * row_load_factor)
+                .sum::<u32>()
+        }
 
-    fn n_columns(&self) -> usize {
-        // just assume square, even though this is never checked anywhere :)
-        self.rows.get(0).map(|row| row.len())
-            .unwrap_or(0usize)
+        result
     }
 
     /**
      * Rotates the platform by 90 degrees clockwise
      */
-    fn rotate_quarter_circle_clockwise(&self) -> PlatformState {
-        let mut rows: Vec<Vec<PlatformItem>> = Vec::new();
-        for column_index in 0..self.n_columns() {
-            let mut new_row = self.rows.iter()
-                .map(|row| row[column_index].clone())
-                .collect::<Vec<_>>();
-            new_row.reverse();
-            rows.push(new_row);
-        }
-
-        PlatformState { rows }
+    fn rotate_quarter_circle_clockwise(&mut self) {
+        self.data.rotate_quarter_circle_clockwise();
     }
 
     fn cycle_times(&self, n_cycles: u32) -> PlatformState {
         let mut carry = self.clone();
         for n_cycle in 0..n_cycles {
             carry.tilt_north();
-            carry = carry.rotate_quarter_circle_clockwise();
+            carry.rotate_quarter_circle_clockwise();
             carry.tilt_north();
-            carry = carry.rotate_quarter_circle_clockwise();
+            carry.rotate_quarter_circle_clockwise();
             carry.tilt_north();
-            carry = carry.rotate_quarter_circle_clockwise();
+            carry.rotate_quarter_circle_clockwise();
             carry.tilt_north();
-            carry = carry.rotate_quarter_circle_clockwise();
+            carry.rotate_quarter_circle_clockwise();
 
             if n_cycle % 1000 == 0 {
                 println!("{} of {} cycles done", n_cycle, n_cycles)
@@ -132,9 +212,9 @@ impl PlatformState {
 
 impl Display for PlatformState {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        for row in self.rows.iter() {
-            for item in row.iter() {
-                item.fmt(f)?
+        for row in 0..self.data.n_rows {
+            for col in 0..self.data.n_cols {
+                self.data.get(row, col).fmt(f)?
             }
             f.write_char('\n')?
         }
@@ -170,12 +250,13 @@ fn input_row(input: &str) -> IResult<&str, Vec<PlatformItem>> {
 
 fn platform_state(input: &str) -> IResult<&str, PlatformState> {
     let (input, rows) = all_consuming(many1(input_row))(input)?;
-    Ok((input, PlatformState { rows }))
+    Ok((input, PlatformState::new(rows)))
 }
 
 pub(crate) fn day14() {
     let input_string = fs::read_to_string("inputs/day14.txt")
         .expect("Couldnt read input");
     let (_, mut platform) = platform_state(&input_string).expect("Failed to parse input");
-    println!("{}", platform.cycle_times(1000000000).north_beam_load());
+
+    println!("{}", platform.cycle_times(1_000_000_000));
 }
